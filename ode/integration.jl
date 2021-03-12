@@ -50,12 +50,16 @@ f(t, y) = t + 2 - y
 # ╔═╡ e8638898-8250-11eb-1e62-fb168f780ad2
 g(t) = f(t, y(t))
 
+# ╔═╡ b6b62c80-830c-11eb-1707-b983785f3cb7
+default(lw = 2)
+
 # ╔═╡ f307d86c-8250-11eb-01a6-2fe25dc9e9bb
 begin
-	fig = plot(xlim = (0, 2), ylim = (0, 2))
+	xlim, ylim = (0, 2), (-0.1, 2.1)
+	x = range(xlim..., step = 0.01)
 
-	local x = 0.0:0.01:2.0
-	plot!(fig, x, g.(x), fillrange = zero.(x), fillalpha = 0.35, lw = 2, label = "g")
+	fig = plot(; xlim, ylim)
+	plot!(fig, x, g.(x), fillrange = zero.(x), fillalpha = 0.35, label = "g")
 end
 
 # ╔═╡ 1b786106-8254-11eb-31db-fb4ef030eb1a
@@ -67,15 +71,16 @@ md"""
 # ╔═╡ 145aa8ec-8255-11eb-3e5d-23a0e9a3b983
 begin
 	local x = 0.0:0.1:0.1
-	plot!(fig, x, fill(g(0.0), size(x)), fillrange = zero.(x), fillalpha = 0.35)
+	plot!(fig, x, fill(g(0.0), size(x)), fillrange = zero.(x), fillalpha = 0.35, label = "")
 end
 
 # ╔═╡ Cell order:
 # ╟─3658aed6-824f-11eb-049c-cb2ce9117e65
-# ╠═c42a3e90-8250-11eb-2e52-174b1b7a87bc
 # ╠═c6add1a4-8250-11eb-393d-0fe1c50dafef
 # ╠═d585e066-8250-11eb-242a-3fc27732c4ac
 # ╠═e8638898-8250-11eb-1e62-fb168f780ad2
+# ╠═c42a3e90-8250-11eb-2e52-174b1b7a87bc
+# ╠═b6b62c80-830c-11eb-1707-b983785f3cb7
 # ╠═f307d86c-8250-11eb-01a6-2fe25dc9e9bb
 # ╟─1b786106-8254-11eb-31db-fb4ef030eb1a
 # ╠═145aa8ec-8255-11eb-3e5d-23a0e9a3b983
