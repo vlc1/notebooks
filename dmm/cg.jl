@@ -4,6 +4,9 @@
 using Markdown
 using InteractiveUtils
 
+# ╔═╡ 9e406fcc-2122-4133-b612-fc1ee4f8c170
+import Pkg; Pkg.add("IterativeSolvers"); Pkg.add("DistributedArrays")
+
 # ╔═╡ c810af14-b553-4a25-9423-c18850dae690
 using IterativeSolvers
 
@@ -144,6 +147,7 @@ md"""
 cg(Diagonal(dA), db)
 
 # ╔═╡ Cell order:
+# ╠═9e406fcc-2122-4133-b612-fc1ee4f8c170
 # ╟─6dec645a-8a0b-49c8-8ae9-37c7c7f2b25e
 # ╠═c0340c58-c233-11eb-32fd-ddb8506d9ecb
 # ╟─157ab7ce-ed31-430e-a230-438f02630753
