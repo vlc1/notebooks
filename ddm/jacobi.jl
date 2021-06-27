@@ -7,9 +7,6 @@ using InteractiveUtils
 # ╔═╡ 110d3d54-9225-4a44-83ce-3a7f509232fd
 using OffsetArrays
 
-# ╔═╡ 1d7ff3fd-e44e-4f13-ba6b-e6902dbb2fbb
-using Plots
-
 # ╔═╡ 06626098-d059-11eb-0434-6f829bce295f
 md"""
 Let's first examine the Jacobi preconditioner with no overlap.
@@ -24,18 +21,15 @@ n_i = \left \lfloor \frac{n i}{p} \right \rfloor - \left \lfloor \frac{n \left (
 
 # ╔═╡ e6a47c50-0d83-4333-af8e-6b493aef773c
 begin
-	struct UniformPartition{N,T} <: AbstractArray{CartesianIndices{N,T},N}
-		ndof::NTuple{N,Int} # also represent this with CartesianIndices
+	struct UniformPartition{N,T<:CartesianIndices{N}} <: AbstractArray{T,N}
+		indices::T
 		nover::NTuple{N,Int}
 		nproc::NTuple{N,Int}
 	end
-
-	UniformPartition(ndof::T, nover::T, nproc::T) where {N,T<:NTuple{N}} =
-		UniformPartition{N,NTuple{N,UnitRange{Int}}}(ndof, nover, nproc)
 end
 
 # ╔═╡ 74880f2a-cd4b-49af-a574-c680785b9be6
-getdof(p::UniformPartition) = p.ndof
+getindices(p::UniformPartition) = p.indices
 
 # ╔═╡ 8683a8d9-af47-4c3b-a075-b7b4796c297f
 getover(p::UniformPartition) = p.nover
@@ -48,184 +42,111 @@ Base.size(p::UniformPartition) = getproc(p)
 
 # ╔═╡ 2b2cf2c0-c38d-4991-8a33-7a3b481754ec
 Base.getindex(part::UniformPartition, index::CartesianIndex) =
-	getindex(part, index.I...)
+	getindex(part, Tuple(index)...)
 
 # ╔═╡ 087bc9b7-817d-49fc-ab00-513ab03f342a
 function Base.getindex(part::UniformPartition, index...)
-	ndof, nover, nproc = getdof(part), getover(part), getproc(part)
+	indices = getindices(part)
+	nover = getover(part)
+	nproc = getproc(part)
 
-	map(ndof, nover, nproc, index) do d, o, p, i
+	lo = Tuple(first(indices))
+	hi = Tuple(last(indices))
+
+	map(lo, hi, nover, nproc, index) do l, u, o, p, i
+		d = u - l + 1
 		UnitRange(
-			max(floor(Int, d * (i - 1) / p) + 1 - o ÷ 2, 1),
-			min(floor(Int, d * i / p) + 1 - 1 + (o + 1) ÷ 2, d)
+			max(d * (i - 1) ÷ p + l - o ÷ 2, l),
+			min(d * i ÷ p - 1 + l + (o + 1) ÷ 2, u)
 		)
 	end |> CartesianIndices
 end
 
 # ╔═╡ f30e6e06-ca06-4a0e-8dc8-a9b45eb6db5c
-partition = begin
-	local ndof = (64,)
-	local nover = (1,)
-	local nproc = (9,)
-	UniformPartition(ndof, nover, nproc)
+partition = UniformPartition(
+	# indices
+	CartesianIndices((33:64, 17:32)),
+	# overlap (nover)
+	(2, 1),
+	# processes (nproc)
+	(9, 3)
+)
+
+# ╔═╡ a8d9eeff-bd77-4e02-89b0-3f676fa11fc3
+md"""
+# `CartesianIndices`
+
+"""
+
+# ╔═╡ 49bf2458-e192-4c01-80e4-f48b37bca3d2
+function pad(indices, n)
+	lo = Tuple(first(indices))
+	hi = Tuple(last(indices))
+
+	map(n, lo, hi) do i, l, h
+		l - i:h + i
+	end |> CartesianIndices
 end
 
 # ╔═╡ cb9a7522-8dba-4c95-a7c3-93ee8f2fd21b
 md"""
-# Domains
+# Ghosting
 
 """
+
+# ╔═╡ baaa29dd-1fb6-451b-961c-20c9a45be294
+begin
+	struct GhostedArray{T,N,AA<:AbstractArray{T,N}} <: AbstractArray{T,N}
+		parent::AA
+		nghost::NTuple{N,Int}
+	end
+
+	function GhostedArray{T}(indices::CartesianIndices{N}, n) where {T,N}
+		ghosted = pad(indices, n)
+		data = OffsetArray(Array{T}(undef, size(ghosted)), ghosted)
+		GhostedArray(data, n)
+	end
+end
+
+# ╔═╡ d8452319-d87b-4d11-b21f-f2c8306179ee
+Base.parent(a::GhostedArray) = a.parent
+
+# ╔═╡ c72529da-9395-4409-9f55-b15e46611e0d
+Base.getindex(a::GhostedArray, i...) = getindex(parent(a), i...)
+
+# ╔═╡ a1a7383b-9585-4952-9a27-a6ed74b60ce0
+Base.setindex!(a::GhostedArray, i...) = setindex!(parent(a), i...)
+
+# ╔═╡ 3ecd7b07-e603-4994-8941-b704bae05299
+# need to skip
+Base.axes(a::GhostedArray) = axes(parent(a))
+
+# ╔═╡ 0d2d52a4-c656-41dd-b641-17c209c3affa
+Base.size(a::GhostedArray) = size(parent(a))
 
 # ╔═╡ 2d8bf534-0203-4d58-9f2d-1aabd99176a3
-begin
-	local nover = 1
-	nst = (1,)
-	param = (nover, first(nst))
+nghost = (1, 1)
+
+# ╔═╡ 0fecb93e-8d74-4c9d-a5b6-7fe43e175268
+b = GhostedArray{Float64}(getindices(partition), nghost)
+
+# ╔═╡ 449cd7fb-77f7-4c53-b665-0d322aed465d
+axes(b)
+
+# ╔═╡ d8298fed-3266-47c7-8b0a-1361a940c557
+function initialize(::Type{T}, indices::CartesianIndices{N}, n) where {T,N}
+	ghosted = pad(indices, n)
+	OffsetArray(Array{T}(undef, size(ghosted)), ghosted)
 end
 
-# ╔═╡ 429fe85b-87ac-4ad5-9512-df7130d3bf48
-abstract type AbstractDomain end
+# ╔═╡ a615ce0f-f57e-4e50-9334-4b487f9a2443
+#b = initialize(Float64, getindices(partition), nst)
 
-# ╔═╡ c2b83803-de47-405c-bc35-a8318c4d538d
-md"""
-## Interior domain
+# ╔═╡ 37eb5392-9c17-4d06-883b-0d3693a954fc
+view(b, getindices(partition))
 
-"""
-
-# ╔═╡ 97603474-d72a-4841-a206-09bd1242d608
-struct Interior <: AbstractDomain end
-
-# ╔═╡ 105935ef-8d8e-4934-8485-9e7a41549c34
-getshift(::Interior, nover, args...) = -nover
-
-# ╔═╡ 9e192127-c4ef-4924-a2af-976fe7ac52a0
-interior(::AbstractArray{T,N}) where {T,N} =
-	ntuple(i -> Interior(), Val(N))
-
-# ╔═╡ 7a05de82-ef35-493f-9183-350c5582b58d
-md"""
-## Half overlap
-
-"""
-
-# ╔═╡ 81860fb4-ba52-4ccc-90cd-318f2124683f
-struct SemiOverlap <: AbstractDomain end
-
-# ╔═╡ 68656ff6-4632-4193-b1f9-a026c8ae1a0e
-getshift(::SemiOverlap, args...) = 0
-
-# ╔═╡ 6dfa3945-59d5-4425-8469-e5d513cf7133
-semioverlap(::AbstractArray{T,N}) where {T,N} =
-	ntuple(i -> SemiOverlap(), Val(N))
-
-# ╔═╡ c8327bb8-5f3f-46b5-9a5e-d489f53eeac8
-md"""
-## Full overlap
-
-"""
-
-# ╔═╡ 859faf02-ef8f-4a25-95d5-3d7695ec64f9
-struct FullOverlap <: AbstractDomain end
-
-# ╔═╡ d0a4c4e4-ac73-4e5a-a6b1-f188c0e5de1e
-fulloverlap(::AbstractArray{T,N}) where {T,N} =
-	ntuple(i -> FullOverlap(), Val(N))
-
-# ╔═╡ 893975d5-c3e3-4289-94a8-62f9fb7d0c3c
-getshift(::FullOverlap, nover, args...) = nover
-
-# ╔═╡ adce8693-a881-47d3-9f31-b68ff9c3b617
-md"""
-## Ghosted overlap
-
-"""
-
-# ╔═╡ 6b5cb70a-6b1d-42d8-8eb1-d6d63da4a347
-struct GhostedOverlap <: AbstractDomain end
-
-# ╔═╡ e91c9a52-1a27-40b2-b822-14f99d293894
-getshift(::GhostedOverlap, nover, nst) = nover + nst
-
-# ╔═╡ 9f56bc48-43bc-4fce-a9b3-a2eed86b6ccd
-ghostedoverlap(::AbstractArray{T,N}) where {T,N} =
-	ntuple(i -> GhostedOverlap(), Val(N))
-
-# ╔═╡ c172fbca-737d-4c4c-a75a-3ef9444f3d48
-md"""
-## Selector
-
-"""
-
-# ╔═╡ 2a3e3384-2479-4e9e-a72d-7e2b88d5de49
-function select(domains, indices, args...)
-	map(domains, Tuple(first(indices)), Tuple(last(indices))) do domain, start, stop
-		shift = getshift(domain, args...)
-		start - shift:stop + shift
-	end |> CartesianIndices
-end
-
-# ╔═╡ 09b19bb8-05c0-4373-bb10-81b6388cc872
-function interior(indices, args...)
-	domains = interior(indices)
-	select(domains, indices, args...)
-end
-
-# ╔═╡ 852d21fa-55a6-4541-bea0-f7cf7c0eee37
-function semioverlap(indices, args...)
-	domains = semioverlap(indices)
-	select(domains, indices, args...)
-end
-
-# ╔═╡ b4b0114a-0cb5-458b-bc08-646b07c447b4
-function fulloverlap(indices, args...)
-	domains = fulloverlap(indices)
-	select(domains, indices, args...)
-end
-
-# ╔═╡ 2e0c9b29-609f-467a-b0d6-8f57afcb3b5a
-function ghostedoverlap(indices, args...)
-	domains = ghostedoverlap(indices)
-	select(domains, indices, args...)
-end
-
-# ╔═╡ 49bf2458-e192-4c01-80e4-f48b37bca3d2
-# symmetric
-function pad(indices, n)
-	map(n, Tuple(first(indices)), Tuple(last(indices))) do i, lo, up
-		lo - i:up + i
-	end |> CartesianIndices
-end
-
-# ╔═╡ 7299bb9c-cf6e-4840-a3f6-e3ed440d78ed
-md"""
-To get the interior of a partition :
-
-"""
-
-# ╔═╡ a776f655-5c0b-4e55-be59-7575f10bd5d2
-interior(partition[2,3], param...)
-
-# ╔═╡ ca7660d4-1faa-4fe6-927f-408cdd415c5f
-md"""
-# Global and local arrays
-
-*À la* PETSc...
-
-"""
-
-# ╔═╡ aee7038c-3d40-45aa-ae54-9333ecffeeb4
-#=
-begin
-	local n = getdof(partition)
-	local x = [[(2i - 1) / n[j] for i in 1:n[j]] for j in 1:length(n)]
-	b = reshape(
-		[sinpi(x[1][i]) * cospi(x[2][j]) for i in 1:n[1] for j in 1:n[2]],
-		n
-		)
-	#scatter(x[1], b, label = "rhs")
-	#x
-end
-=#
+# ╔═╡ b39d2736-c827-452b-a5a3-adbf19eb781d
+Array{Float64}(undef, (2:3, 3:4))
 
 # ╔═╡ 3c59a707-3b63-450d-90e1-1ed6c00da6c2
 foo = begin
@@ -266,26 +187,11 @@ function Base.view(::Type{T}, a::DDMVector) where {T<:AbstractDomain}
 end
 =#
 
-# ╔═╡ 7510547d-bfc9-4b9e-918d-892251f0c14a
-#Base.parent(a::DDMArray) = a.parent
-
 # ╔═╡ 0eba4d39-e3f7-45a1-96d6-847109e48e23
 #overlap(a::DDMArray) = a.nover
 
 # ╔═╡ 1f31f525-afc4-4e20-ae3e-fd3fb93aca24
 #stencil(a::DDMArray) = a.nst
-
-# ╔═╡ 93403c71-e61e-4a2e-9277-ff51fb009637
-#Base.getindex(a::DDMArray, i...) = getindex(parent(a), i...)
-
-# ╔═╡ 00e0e5e0-bfe1-41d6-8950-f5a52af1ad66
-#Base.setindex!(a::DDMArray, i...) = setindex!(parent(a), i...)
-
-# ╔═╡ ae492709-aba1-473f-8467-80a5146a7be3
-#Base.axes(a::DDMArray) = axes(parent(a))
-
-# ╔═╡ c430985d-3bef-47ff-a665-1850e0239231
-#Base.size(a::DDMArray) = size(parent(a))
 
 # ╔═╡ 46277571-c698-4dd7-a6a7-a6c609d0845e
 #=
@@ -309,11 +215,13 @@ function initialize(x, partition, n)
 end
 
 # ╔═╡ 5da69b07-3d42-4ee1-86ad-debee168de8d
+#=
 b = begin
 	local indices = CartesianIndices(getdof(partition))
 	local ghost = pad(indices, nst)
 	OffsetArray(zeros(axes(ghost)), ghost)
 end
+=#
 
 # ╔═╡ 1542f9dd-21e7-4e4e-a50e-5a234b1f8abe
 CartesianIndices(getdof(partition))
@@ -474,6 +382,9 @@ xs = [x; x; x]
 # ╔═╡ b080fc54-9526-4ff2-8a18-5f458c288bce
 vcat(x, xs, x)
 
+# ╔═╡ 63ed6044-5365-40b4-8f3d-1cb442dae4d1
+temp = CartesianIndices((2:64,))
+
 # ╔═╡ Cell order:
 # ╠═110d3d54-9225-4a44-83ce-3a7f509232fd
 # ╟─06626098-d059-11eb-0434-6f829bce295f
@@ -485,48 +396,28 @@ vcat(x, xs, x)
 # ╠═2b2cf2c0-c38d-4991-8a33-7a3b481754ec
 # ╠═087bc9b7-817d-49fc-ab00-513ab03f342a
 # ╠═f30e6e06-ca06-4a0e-8dc8-a9b45eb6db5c
-# ╟─cb9a7522-8dba-4c95-a7c3-93ee8f2fd21b
-# ╠═2d8bf534-0203-4d58-9f2d-1aabd99176a3
-# ╠═429fe85b-87ac-4ad5-9512-df7130d3bf48
-# ╟─c2b83803-de47-405c-bc35-a8318c4d538d
-# ╠═97603474-d72a-4841-a206-09bd1242d608
-# ╠═105935ef-8d8e-4934-8485-9e7a41549c34
-# ╠═9e192127-c4ef-4924-a2af-976fe7ac52a0
-# ╠═09b19bb8-05c0-4373-bb10-81b6388cc872
-# ╟─7a05de82-ef35-493f-9183-350c5582b58d
-# ╠═81860fb4-ba52-4ccc-90cd-318f2124683f
-# ╠═68656ff6-4632-4193-b1f9-a026c8ae1a0e
-# ╠═6dfa3945-59d5-4425-8469-e5d513cf7133
-# ╠═852d21fa-55a6-4541-bea0-f7cf7c0eee37
-# ╟─c8327bb8-5f3f-46b5-9a5e-d489f53eeac8
-# ╠═859faf02-ef8f-4a25-95d5-3d7695ec64f9
-# ╠═d0a4c4e4-ac73-4e5a-a6b1-f188c0e5de1e
-# ╠═893975d5-c3e3-4289-94a8-62f9fb7d0c3c
-# ╠═b4b0114a-0cb5-458b-bc08-646b07c447b4
-# ╟─adce8693-a881-47d3-9f31-b68ff9c3b617
-# ╠═6b5cb70a-6b1d-42d8-8eb1-d6d63da4a347
-# ╠═e91c9a52-1a27-40b2-b822-14f99d293894
-# ╠═9f56bc48-43bc-4fce-a9b3-a2eed86b6ccd
-# ╠═2e0c9b29-609f-467a-b0d6-8f57afcb3b5a
-# ╟─c172fbca-737d-4c4c-a75a-3ef9444f3d48
-# ╠═2a3e3384-2479-4e9e-a72d-7e2b88d5de49
+# ╟─a8d9eeff-bd77-4e02-89b0-3f676fa11fc3
 # ╠═49bf2458-e192-4c01-80e4-f48b37bca3d2
-# ╟─7299bb9c-cf6e-4840-a3f6-e3ed440d78ed
-# ╠═a776f655-5c0b-4e55-be59-7575f10bd5d2
-# ╟─ca7660d4-1faa-4fe6-927f-408cdd415c5f
-# ╠═1d7ff3fd-e44e-4f13-ba6b-e6902dbb2fbb
-# ╠═aee7038c-3d40-45aa-ae54-9333ecffeeb4
+# ╠═cb9a7522-8dba-4c95-a7c3-93ee8f2fd21b
+# ╠═baaa29dd-1fb6-451b-961c-20c9a45be294
+# ╠═d8452319-d87b-4d11-b21f-f2c8306179ee
+# ╠═c72529da-9395-4409-9f55-b15e46611e0d
+# ╠═a1a7383b-9585-4952-9a27-a6ed74b60ce0
+# ╠═3ecd7b07-e603-4994-8941-b704bae05299
+# ╠═0d2d52a4-c656-41dd-b641-17c209c3affa
+# ╠═2d8bf534-0203-4d58-9f2d-1aabd99176a3
+# ╠═0fecb93e-8d74-4c9d-a5b6-7fe43e175268
+# ╠═449cd7fb-77f7-4c53-b665-0d322aed465d
+# ╠═d8298fed-3266-47c7-8b0a-1361a940c557
+# ╠═a615ce0f-f57e-4e50-9334-4b487f9a2443
+# ╠═37eb5392-9c17-4d06-883b-0d3693a954fc
+# ╠═b39d2736-c827-452b-a5a3-adbf19eb781d
 # ╠═3c59a707-3b63-450d-90e1-1ed6c00da6c2
 # ╠═86247385-1aed-4ed6-b70f-4a567201889e
 # ╠═cd8534b0-e522-4d42-8cc0-bf3ae75ad92e
 # ╠═47ce9c5c-4a82-43dc-b529-d83e55532e4c
-# ╠═7510547d-bfc9-4b9e-918d-892251f0c14a
 # ╠═0eba4d39-e3f7-45a1-96d6-847109e48e23
 # ╠═1f31f525-afc4-4e20-ae3e-fd3fb93aca24
-# ╠═93403c71-e61e-4a2e-9277-ff51fb009637
-# ╠═00e0e5e0-bfe1-41d6-8950-f5a52af1ad66
-# ╠═ae492709-aba1-473f-8467-80a5146a7be3
-# ╠═c430985d-3bef-47ff-a665-1850e0239231
 # ╠═46277571-c698-4dd7-a6a7-a6c609d0845e
 # ╠═5dab8c53-4fac-4ac4-833c-78918dd3d823
 # ╠═5da69b07-3d42-4ee1-86ad-debee168de8d
@@ -556,3 +447,4 @@ vcat(x, xs, x)
 # ╠═561004ca-a30c-4f26-a024-ca54afc3f997
 # ╠═351fb0f1-8b36-473c-a305-9aa97caaaafa
 # ╠═b080fc54-9526-4ff2-8a18-5f458c288bce
+# ╠═63ed6044-5365-40b4-8f3d-1cb442dae4d1
